@@ -1,0 +1,779 @@
+import tkinter as tk
+from tkinter import messagebox, ttk
+from collections import deque
+import heapq
+import time
+import random
+import math
+
+result = None
+step = {'Up': (-1, 0), 'Down': (1, 0), 'Left': (0, -1), 'Right': (0, 1)}
+delay = 500
+paused = False
+running = False
+max_columns = 3
+step_frame_count = 0
+simulation_result = {}
+
+def get_state_from_entries(entries):
+    return tuple(tuple(int(entries[i][j].get() or 0) for j in range(3)) for i in range(3))
+
+def find_blank(state):
+    for i in range(3):
+        for j in range(3):
+            if state[i][j] == 0:
+                return i, j
+    return None
+
+def swap(state, i1, j1, i2, j2):
+    new_state = [list(row) for row in state]
+    new_state[i1][j1], new_state[i2][j2] = new_state[i2][j2], new_state[i1][j1]
+    return tuple(tuple(row) for row in new_state)
+
+def bfs(start):
+    queue = deque([(start, [])])
+    seen = {start}
+    while queue:
+        current, path = queue.popleft()
+        if current == result:
+            return path
+        blank_i, blank_j = find_blank(current)
+        for move_, (di, dj) in step.items():
+            new_i, new_j = blank_i + di, blank_j + dj
+            if 0 <= new_i < 3 and 0 <= new_j < 3:
+                new_state = swap(current, blank_i, blank_j, new_i, new_j)
+                if new_state not in seen:
+                    queue.append((new_state, path + [move_]))
+                    seen.add(new_state)
+    return None
+
+def dfs(start, max_depth=50):
+    stack = [(start, [])]
+    seen = set()
+    while stack:
+        current, path = stack.pop()
+        if current == result:
+            return path
+        if len(path) > max_depth:
+            continue
+        if current in seen:
+            continue
+        seen.add(current)
+        blank_i, blank_j = find_blank(current)
+        for move_, (di, dj) in step.items():
+            new_i, new_j = blank_i + di, blank_j + dj
+            if 0 <= new_i < 3 and 0 <= new_j < 3:
+                new_state = swap(current, blank_i, blank_j, new_i, new_j)
+                stack.append((new_state, path + [move_]))
+    return None
+
+def ucs(start):
+    pq = [(0, start, [])]
+    cost_map = {start: 0}
+    while pq:
+        cost, current, path = heapq.heappop(pq)
+        if current == result:
+            return path
+        blank_i, blank_j = find_blank(current)
+        for move_, (di, dj) in step.items():
+            new_i, new_j = blank_i + di, blank_j + dj
+            if 0 <= new_i < 3 and 0 <= new_j < 3:
+                new_state = swap(current, blank_i, blank_j, new_i, new_j)
+                new_cost = cost + 1
+                if new_state not in cost_map or new_cost < cost_map[new_state]:
+                    cost_map[new_state] = new_cost
+                    heapq.heappush(pq, (new_cost, new_state, path + [move_]))
+    return None
+
+def iddfs(start, max_depth=20):
+    def dls(state, path, depth, visited):
+        if state == result:
+            return path
+        if depth == 0:
+            return None
+        visited.add(state)
+        blank_i, blank_j = find_blank(state)
+        for move_, (di, dj) in step.items():
+            new_i, new_j = blank_i + di, blank_j + dj
+            if 0 <= new_i < 3 and 0 <= new_j < 3:
+                new_state = swap(state, blank_i, blank_j, new_i, new_j)
+                if new_state not in visited:
+                    res = dls(new_state, path + [move_], depth - 1, visited)
+                    if res:
+                        return res
+        return None
+    for depth in range(1, max_depth + 1):
+        solution = dls(start, [], depth, set())
+        if solution:
+            return solution
+    return None
+
+def greedy(start):
+    def heuristic(state):
+        return sum(abs((value-1) % 3 - j) + abs((value-1) // 3 - i)
+                   for i, row in enumerate(state)
+                   for j, value in enumerate(row) if value != 0)
+    pq = [(heuristic(start), start, [])]
+    seen = set()
+    while pq:
+        _, current, path = heapq.heappop(pq)
+        if current == result:
+            return path
+        if current in seen:
+            continue
+        seen.add(current)
+        blank_i, blank_j = find_blank(current)
+        for move_, (di, dj) in step.items():
+            new_i, new_j = blank_i + di, blank_j + dj
+            if 0 <= new_i < 3 and 0 <= new_j < 3:
+                new_state = swap(current, blank_i, blank_j, new_i, new_j)
+                if new_state not in seen:
+                    heapq.heappush(pq, (heuristic(new_state), new_state, path + [move_]))
+    return None
+
+def a_search(start):
+    def heuristic(state):
+        return sum(abs((value-1) % 3 - j) + abs((value-1) // 3 - i)
+                   for i, row in enumerate(state)
+                   for j, value in enumerate(row) if value != 0)
+    pq = []
+    g_map = {start: 0}
+    h0 = heuristic(start)
+    heapq.heappush(pq, (h0, 0, start, []))
+    while pq:
+        f, g, current, path = heapq.heappop(pq)
+        if current == result:
+            return path
+        blank_i, blank_j = find_blank(current)
+        for move_, (di, dj) in step.items():
+            new_i, new_j = blank_i + di, blank_j + dj
+            if 0 <= new_i < 3 and 0 <= new_j < 3:
+                new_state = swap(current, blank_i, blank_j, new_i, new_j)
+                new_g = g + 1
+                new_f = new_g + heuristic(new_state)
+                if new_state not in g_map or new_g < g_map[new_state]:
+                    g_map[new_state] = new_g
+                    heapq.heappush(pq, (new_f, new_g, new_state, path + [move_]))
+    return None
+
+def ida_search(start):
+    def heuristic(state):
+        return sum(abs((value-1) % 3 - j) + abs((value-1) // 3 - i)
+                   for i, row in enumerate(state)
+                   for j, value in enumerate(row) if value != 0)
+    def search(state, path, g, bound):
+        f = g + heuristic(state)
+        if f > bound:
+            return f
+        if state == result:
+            return path
+        min_next = float('inf')
+        blank_i, blank_j = find_blank(state)
+        for move_, (di, dj) in step.items():
+            new_i, new_j = blank_i + di, blank_j + dj
+            if 0 <= new_i < 3 and 0 <= new_j < 3:
+                new_state = swap(state, blank_i, blank_j, new_i, new_j)
+                if path and new_state == path[-1]:
+                    continue
+                t = search(new_state, path + [state], g + 1, bound)
+                if isinstance(t, list):
+                    return t
+                if t < min_next:
+                    min_next = t
+        return min_next
+    bound = heuristic(start)
+    path = []
+    while True:
+        t = search(start, path, 0, bound)
+        if isinstance(t, list):
+            return convert_states_to_moves(t + [result])
+        if t == float('inf'):
+            return None
+        bound = t
+
+def convert_states_to_moves(states):
+    if not states or len(states) < 2:
+        return []
+    moves = []
+    for i in range(len(states) - 1):
+        s1 = states[i]
+        s2 = states[i+1]
+        blank1 = find_blank(s1)
+        blank2 = find_blank(s2)
+        di = blank2[0] - blank1[0]
+        dj = blank2[1] - blank1[1]
+        for m, (mdi, mdj) in step.items():
+            if (mdi, mdj) == (di, dj):
+                moves.append(m)
+                break
+    return moves
+
+def simple_hill_climbing(start):
+    def heuristic(state):
+        return sum(1 for i in range(3) for j in range(3)
+                   if state[i][j] != result[i][j] and state[i][j] != 0)
+    current_state = start
+    path = []
+    while True:
+        blank = find_blank(current_state)
+        neighbors = [(swap(current_state, *blank, blank[0] + di, blank[1] + dj), move)
+                     for move, (di, dj) in step.items()
+                     if 0 <= blank[0] + di < 3 and 0 <= blank[1] + dj < 3]
+        if not neighbors:
+            return path if current_state == result else None
+        best_neighbor = min(neighbors, key=lambda x: heuristic(x[0]))
+        if heuristic(best_neighbor[0]) >= heuristic(current_state):
+            return path if current_state == result else None
+        current_state, move = best_neighbor
+        path.append(move)
+
+def steepest_ascent_hill_climbing(start):
+    def heuristic(state):
+        return sum(1 for i in range(3) for j in range(3)
+                   if state[i][j] != result[i][j] and state[i][j] != 0)
+    current_state = start
+    path = []
+    while True:
+        blank = find_blank(current_state)
+        neighbors = [(swap(current_state, *blank, blank[0] + di, blank[1] + dj), move)
+                     for move, (di, dj) in step.items()
+                     if 0 <= blank[0] + di < 3 and 0 <= blank[1] + dj < 3]
+        if not neighbors:
+            return path if current_state == result else None
+        best_neighbor = min(neighbors, key=lambda x: heuristic(x[0]))
+        if heuristic(best_neighbor[0]) >= heuristic(current_state):
+            return path if current_state == result else None
+        current_state, move = best_neighbor
+        path.append(move)
+
+def stochastic_hill_climbing(start):
+    def heuristic(state):
+        return sum(1 for i in range(3) for j in range(3)
+                   if state[i][j] != result[i][j] and state[i][j] != 0)
+    current_state = start
+    path = []
+    while True:
+        blank = find_blank(current_state)
+        neighbors = []
+        for move_, (di, dj) in step.items():
+            new_i, new_j = blank[0] + di, blank[1] + dj
+            if 0 <= new_i < 3 and 0 <= new_j < 3:
+                new_state = swap(current_state, blank[0], blank[1], new_i, new_j)
+                neighbors.append((new_state, move_))
+        if not neighbors:
+            return path if current_state == result else None
+        better_neighbors = [n for n in neighbors if heuristic(n[0]) < heuristic(current_state)]
+        if better_neighbors:
+            new_state, move_ = random.choice(better_neighbors)
+            current_state = new_state
+            path.append(move_)
+        else:
+            return path if current_state == result else None
+
+def simulated_annealing(start):
+    def heuristic(state):
+        return sum(1 for i in range(3) for j in range(3)
+                   if state[i][j] != result[i][j] and state[i][j] != 0)
+    current_state = start
+    current_score = heuristic(current_state)
+    path = []
+    T = 1000.0
+    alpha = 0.99
+    while T > 0.1:
+        if current_state == result:
+            return path
+        blank_i, blank_j = find_blank(current_state)
+        neighbors = []
+        for move_, (di, dj) in step.items():
+            new_i, new_j = blank_i + di, blank_j + dj
+            if 0 <= new_i < 3 and 0 <= new_j < 3:
+                new_state = swap(current_state, blank_i, blank_j, new_i, new_j)
+                neighbors.append((new_state, move_))
+        if not neighbors:
+            break
+        new_state, move_ = random.choice(neighbors)
+        new_score = heuristic(new_state)
+        delta = current_score - new_score
+        if delta > 0 or random.random() < math.exp(delta / T):
+            current_state = new_state
+            current_score = new_score
+            path.append(move_)
+        T *= alpha
+    if current_state == result:
+        return path
+    return None
+
+def beam_search(start, beam_width=3):
+    def heuristic(state):
+        return sum(abs((value-1) % 3 - j) + abs((value-1) // 3 - i)
+                   for i, row in enumerate(state)
+                   for j, value in enumerate(row) if value != 0)
+    beam = [(start, [])]
+    while beam:
+        for state, path in beam:
+            if state == result:
+                return path
+        next_beam = []
+        for state, path in beam:
+            blank_i, blank_j = find_blank(state)
+            for move_, (di, dj) in step.items():
+                new_i, new_j = blank_i + di, blank_j + dj
+                if 0 <= new_i < 3 and 0 <= new_j < 3:
+                    new_state = swap(state, blank_i, blank_j, new_i, new_j)
+                    new_path = path + [move_]
+                    next_beam.append((new_state, new_path))
+        if not next_beam:
+            return None
+        next_beam.sort(key=lambda x: heuristic(x[0]))
+        beam = next_beam[:beam_width]
+    return None
+
+algorithms = {
+    "BFS": bfs,
+    "DFS": dfs,
+    "UCS": ucs,
+    "IDDFS": iddfs,
+    "Greedy": greedy,
+    "A* Search": a_search,
+    "IDA* Search": ida_search,
+    "Simple Hill Climbing": simple_hill_climbing,
+    "Steepest Ascent HC": steepest_ascent_hill_climbing,
+    "Stochastic HC": stochastic_hill_climbing,
+    "Simulated Annealing": simulated_annealing,
+    "Beam Search": lambda start: beam_search(start, beam_width=3)
+}
+
+def update_view(state):
+    for i in range(3):
+        for j in range(3):
+            tile = view_labels[i][j]
+            value = state[i][j]
+            tile.config(text=str(value) if value != 0 else "", bg="#E8F5E9", fg="#1B5E20")
+
+def create_state_grid(parent, state_3x3, cell_size=2):
+    for i in range(3):
+        for j in range(3):
+            val = state_3x3[i][j]
+            bg_color = "#C8E6C9" if val == 0 else "#FFFFFF"
+            lbl = tk.Label(
+                parent, 
+                text=str(val) if val != 0 else "",
+                width=cell_size, 
+                height=cell_size,
+                font=("Helvetica", 12, "bold"),
+                bg=bg_color, 
+                fg="#1B5E20", 
+                bd=1, 
+                relief="ridge"
+            )
+            lbl.grid(row=i, column=j, padx=2, pady=2, sticky="nsew")
+
+def add_step_frame(index, move_, state_3x3, step_time):
+    global step_frame_count
+    col = step_frame_count % max_columns
+    row = step_frame_count // max_columns
+    
+    frame = tk.Frame(steps_container, bg="#F1F8E9", bd=1, relief="solid",
+                     width=140, height=140)
+    frame.grid(row=row, column=col, padx=5, pady=5)
+    frame.grid_propagate(False)
+    
+    lbl = tk.Label(frame, text=f"Bước {index}:\n{move_}",
+                   font=("Helvetica", 12, "bold"),
+                   bg="#F1F8E9", fg="#33691E")
+    lbl.pack(padx=5, pady=2)
+    
+    grid_holder = tk.Frame(frame, bg="#F1F8E9")
+    grid_holder.pack(padx=5, pady=5)
+    create_state_grid(grid_holder, state_3x3, cell_size=2)
+    
+    time_lbl = tk.Label(frame, text=f"{step_time:.2f}s", font=("Helvetica", 10),
+                        bg="#F1F8E9", fg="#BF360C")
+    time_lbl.pack(pady=2)
+
+    step_frame_count += 1
+
+# --- Control Functions ---
+def pause_program():
+    global paused
+    paused = True
+
+def resume_program():
+    global paused
+    paused = False
+
+def reset_program():
+    global running, paused, step_frame_count, simulation_result
+    running = False
+    paused = False
+    step_frame_count = 0
+    simulation_result = {}
+    for row in initial_entries:
+        for e in row:
+            e.delete(0, tk.END)
+    for row in goal_entries:
+        for e in row:
+            e.delete(0, tk.END)
+    for widget in steps_container.winfo_children():
+        widget.destroy()
+    for widget in time_container.winfo_children():
+        widget.destroy()
+    update_view(((0, 0, 0), (0, 0, 0), (0, 0, 0)))
+    steps_count.config(text="Bước: 0")
+    time_label.config(text="Thời gian: 00:00")
+
+def export_file():
+    if not simulation_result:
+        messagebox.showerror("Lỗi", "Chưa có kết quả chạy để xuất file!")
+        return
+    try:
+        with open("test.txt", "w", encoding="utf-8") as file:
+            file.write("=== 8-Puzzle Solution Steps ===\n\n")
+            file.write("Trạng thái ban đầu:\n")
+            for row in simulation_result['initial']:
+                file.write(" ".join(map(str, row)) + "\n")
+            file.write("\n")
+            for i, (move, state, stime) in enumerate(
+                zip(simulation_result['steps'], 
+                    simulation_result['states'][1:], 
+                    simulation_result['step_times']), 
+                start=1
+            ):
+                file.write(f"Bước {i}: {move}\n")
+                for row in state:
+                    file.write(" ".join(map(str, row)) + "\n")
+                file.write(f"Thời gian bước {i}: {stime:.2f}s\n\n")
+            file.write(f"Tổng số bước: {len(simulation_result['steps'])}\n")
+            file.write(f"Tổng thời gian: {simulation_result['total_time']:.2f}s\n")
+        messagebox.showinfo("Xuất file thành công", "Đã xuất kết quả vào file: test.txt")
+    except Exception as e:
+        messagebox.showerror("Lỗi", f"Lỗi khi xuất file: {str(e)}")
+
+def simulate_solution(steps, current_state, index, all_states, step_times):
+    global simulation_result
+    if index >= len(steps):
+        total_time = time.time() - simulation_result['start_time']
+        simulation_result['total_time'] = total_time
+        time_label.config(text=f"Thời gian: {total_time:.2f}s")
+        steps_count.config(text=f"Bước: {len(simulation_result['steps'])}")
+        
+        for widget in time_container.winfo_children():
+            widget.destroy()
+        for idx, t in enumerate(simulation_result['step_times'], start=1):
+            tk.Label(
+                time_container, 
+                text=f"Bước {idx}: {t:.2f}s", 
+                bg="#F1F8E9", 
+                fg="#33691E", 
+                font=("Helvetica", 10, "bold")
+            ).pack(padx=5, pady=2, anchor="w")
+        
+        messagebox.showinfo("Kết quả", f"Đã giải trong {len(simulation_result['steps'])} bước và {total_time:.2f} giây")
+        return
+
+    if paused:
+        root.after(50, lambda: simulate_solution(steps, current_state, index, all_states, step_times))
+        return
+
+    current_time = time.time()
+    last_timestamp = simulation_result.get('last_timestamp', simulation_result['start_time'])
+    curr_step_time = current_time - last_timestamp
+    simulation_result['last_timestamp'] = current_time
+
+    blank_i, blank_j = find_blank(current_state)
+    move_ = steps[index]
+    new_state = swap(
+        current_state, 
+        blank_i, 
+        blank_j,
+        blank_i + step[move_][0],
+        blank_j + step[move_][1]
+    )
+    update_view(new_state)
+    all_states.append(new_state)
+    step_times.append(curr_step_time)
+
+    add_step_frame(index, move_, new_state, curr_step_time)
+    
+    simulation_result.setdefault('steps', []).append(move_)
+    simulation_result.setdefault('states', []).append(new_state)
+    simulation_result.setdefault('step_times', []).append(curr_step_time)
+
+    steps_count.config(text=f"Bước: {len(simulation_result['steps'])}")
+    
+    root.after(delay, lambda: simulate_solution(steps, new_state, index + 1, all_states, step_times))
+
+def solve_puzzle():
+    global result, paused, running, simulation_result, step_frame_count
+    running = True
+    step_frame_count = 0
+
+    for widget in steps_container.winfo_children():
+        widget.destroy()
+
+    for widget in time_container.winfo_children():
+        widget.destroy()
+
+    simulation_result = {}
+    simulation_result['states'] = []
+    simulation_result['steps'] = []
+    simulation_result['step_times'] = []
+    
+    steps_count.config(text="Bước: 0")
+    time_label.config(text="Thời gian: 00:00")
+
+    initial_state = get_state_from_entries(initial_entries)
+    simulation_result['initial'] = initial_state
+    result_state = get_state_from_entries(goal_entries)
+    update_view(initial_state)
+
+    global result
+    result = result_state
+
+    simulation_result['start_time'] = time.time()
+    simulation_result['last_timestamp'] = simulation_result['start_time']
+    
+    alg_name = selected_algorithm.get()
+    algorithm = algorithms.get(alg_name)
+    solution = algorithm(initial_state)
+    if solution:
+        simulation_result['states'].append(initial_state)
+        root.after(100, lambda: simulate_solution(solution, initial_state, 0, [initial_state], []))
+    else:
+        messagebox.showerror("Thất bại", "Không tìm thấy giải pháp!")
+
+
+root = tk.Tk()
+root.title("8-Puzzle Solver - Nguyễn Phạm Bảo Trân - 23110348")
+root.geometry("1200x750")
+root.configure(bg="#ECEFF1")
+
+root.grid_columnconfigure(0, weight=1, uniform="group1")
+root.grid_columnconfigure(1, weight=0, uniform="group1")
+root.grid_columnconfigure(2, weight=2, uniform="group1")
+
+# --- Cột 0: Nhập trạng thái & Puzzle Hiện Tại ---
+frame_input = tk.Frame(root, bg="#ECEFF1")
+frame_input.grid(row=0, column=0, sticky="nw", padx=10, pady=10)
+
+frame_initial = tk.LabelFrame(
+    frame_input, 
+    text="Trạng Thái Xuất Phát", 
+    font=("Helvetica", 12, "bold"),
+    bg="#FFFFFF", 
+    fg="#00695C", 
+    bd=2, 
+    relief="groove"
+)
+frame_initial.grid(row=0, column=0, padx=5, pady=5, sticky="nsew")
+
+initial_entries = []
+for i in range(3):
+    row = []
+    for j in range(3):
+        e = tk.Entry(frame_initial, width=3, font=("Helvetica", 16), justify="center", bg="#B2DFDB")
+        e.grid(row=i, column=j, padx=5, pady=5, sticky="nsew")
+        row.append(e)
+    initial_entries.append(row)
+
+frame_goal = tk.LabelFrame(
+    frame_input, 
+    text="Trạng Thái Đích", 
+    font=("Helvetica", 12, "bold"),
+    bg="#FFFFFF", 
+    fg="#00695C", 
+    bd=2, 
+    relief="groove"
+)
+frame_goal.grid(row=1, column=0, padx=5, pady=5, sticky="nsew")
+
+goal_entries = []
+for i in range(3):
+    row = []
+    for j in range(3):
+        e = tk.Entry(frame_goal, width=3, font=("Helvetica", 16), justify="center", bg="#B2DFDB")
+        e.grid(row=i, column=j, padx=5, pady=5, sticky="nsew")
+        row.append(e)
+    goal_entries.append(row)
+
+frame_view = tk.LabelFrame(
+    frame_input, 
+    text="Puzzle Hiện Tại", 
+    font=("Helvetica", 12, "bold"),
+    bg="#FFFFFF", 
+    fg="#00695C", 
+    bd=2, 
+    relief="groove"
+)
+frame_view.grid(row=2, column=0, padx=5, pady=5, sticky="nsew")
+
+info_frame = tk.Frame(frame_view, bg="#FFFFFF")
+info_frame.pack(pady=5)
+
+steps_count = tk.Label(info_frame, text="Bước: 0", font=("Helvetica", 10), bg="#FFFFFF", fg="#004D40")
+steps_count.pack(side="left", padx=10)
+
+time_label = tk.Label(info_frame, text="Thời gian: 00:00", font=("Helvetica", 10), bg="#FFFFFF", fg="#004D40")
+time_label.pack(side="left", padx=10)
+
+grid_frame = tk.Frame(frame_view, bg="#FFFFFF")
+grid_frame.pack(padx=10, pady=10)
+
+view_labels = []
+for i in range(3):
+    row = []
+    for j in range(3):
+        lbl = tk.Label(
+            grid_frame, 
+            text="", 
+            width=4, 
+            height=2,
+            font=("Helvetica", 16, "bold"),
+            bg="#FFFFFF", 
+            fg="#004D40", 
+            bd=1, 
+            relief="ridge"
+        )
+        lbl.grid(row=i, column=j, padx=5, pady=5, sticky="nsew")
+        row.append(lbl)
+    view_labels.append(row)
+
+frame_control = tk.Frame(root, bg="#ECEFF1")
+frame_control.grid(row=0, column=1, sticky="n", padx=10, pady=10)
+
+alg_frame = tk.LabelFrame(
+    frame_control, 
+    text="Chọn Thuật Toán", 
+    font=("Helvetica", 12, "bold"), 
+    bg="#FFFFFF", 
+    fg="#00695C", 
+    bd=2, 
+    relief="groove"
+)
+alg_frame.pack(padx=5, pady=5, fill="x")
+
+selected_algorithm = tk.StringVar()
+selected_algorithm.set("BFS")
+alg_dropdown = ttk.Combobox(
+    alg_frame, 
+    textvariable=selected_algorithm, 
+    state="readonly", 
+    values=list(algorithms.keys()), 
+    font=("Helvetica", 12)
+)
+alg_dropdown.pack(padx=10, pady=10, fill="x")
+
+control_frame = tk.LabelFrame(
+    frame_control, 
+    text="Điều Khiển", 
+    font=("Helvetica", 12, "bold"), 
+    bg="#FFFFFF", 
+    fg="#00695C", 
+    bd=2, 
+    relief="groove"
+)
+control_frame.pack(padx=5, pady=5, fill="x")
+
+btn_solve = tk.Button(
+    control_frame, 
+    text="Giải", 
+    font=("Helvetica", 14, "bold"), 
+    bg="#80CBC4", 
+    fg="#004D40", 
+    command=solve_puzzle
+)
+btn_solve.pack(padx=10, pady=5, fill="x")
+
+btn_pause = tk.Button(
+    control_frame, 
+    text="Tạm Dừng", 
+    font=("Helvetica", 12), 
+    bg="#FFAB91", 
+    fg="#BF360C", 
+    command=pause_program
+)
+btn_pause.pack(padx=5, pady=5, fill="x")
+
+btn_resume = tk.Button(
+    control_frame, 
+    text="Tiếp Tục", 
+    font=("Helvetica", 12), 
+    bg="#A5D6A7", 
+    fg="#1B5E20", 
+    command=resume_program
+)
+btn_resume.pack(padx=5, pady=5, fill="x")
+
+btn_reset = tk.Button(
+    control_frame, 
+    text="Reset", 
+    font=("Helvetica", 12), 
+    bg="#CE93D8", 
+    fg="#4A148C", 
+    command=reset_program
+)
+btn_reset.pack(padx=5, pady=5, fill="x")
+
+btn_export = tk.Button(
+    control_frame, 
+    text="Xuất File", 
+    font=("Helvetica", 12), 
+    bg="#AED581", 
+    fg="#33691E", 
+    command=export_file
+)
+btn_export.pack(padx=5, pady=5, fill="x")
+
+frame_time = tk.LabelFrame(
+    frame_control, 
+    text="Thời Gian Chạy", 
+    font=("Helvetica", 12, "bold"), 
+    bg="#FFFFFF", 
+    fg="#00695C", 
+    bd=2, 
+    relief="groove"
+)
+frame_time.pack(padx=5, pady=5, fill="both", expand=True)
+
+time_canvas = tk.Canvas(frame_time, bg="#FFFFFF")
+time_canvas.pack(side="left", fill="both", expand=True)
+
+time_scrollbar = tk.Scrollbar(frame_time, orient="vertical", command=time_canvas.yview)
+time_scrollbar.pack(side="right", fill="y")
+
+time_canvas.configure(yscrollcommand=time_scrollbar.set)
+
+time_container = tk.Frame(time_canvas, bg="#FFFFFF")
+time_canvas.create_window((0, 0), window=time_container, anchor="nw")
+
+def on_time_configure(event):
+    time_canvas.configure(scrollregion=time_canvas.bbox("all"))
+
+time_container.bind("<Configure>", on_time_configure)
+
+bottom_frame = tk.LabelFrame(
+    root, 
+    text="Các Bước Giải", 
+    font=("Helvetica", 12, "bold"), 
+    bg="#ECEFF1", 
+    fg="#00695C", 
+    bd=2, 
+    relief="groove"
+)
+bottom_frame.grid(row=0, column=2, sticky="nsew", padx=10, pady=10)
+
+canvas = tk.Canvas(bottom_frame, bg="#ECEFF1")
+canvas.pack(side="left", fill="both", expand=True)
+
+scrollbar = tk.Scrollbar(bottom_frame, orient="vertical", command=canvas.yview)
+scrollbar.pack(side="right", fill="y")
+canvas.configure(yscrollcommand=scrollbar.set)
+
+steps_container = tk.Frame(canvas, bg="#ECEFF1")
+canvas.create_window((0, 0), window=steps_container, anchor="nw")
+
+def on_configure(event):
+    canvas.configure(scrollregion=canvas.bbox("all"))
+steps_container.bind("<Configure>", on_configure)
+
+root.mainloop()
