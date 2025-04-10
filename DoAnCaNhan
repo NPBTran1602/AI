@@ -328,6 +328,27 @@ def beam_search(start, beam_width=3):
         beam = next_beam[:beam_width]
     return None
 
+def and_or_search(start):
+    def or_search(state, path):
+        if state == result:
+            return []
+        # Nếu state đã xuất hiện trong path thì tránh vòng lặp
+        if state in path:
+            return None
+        new_path = set(path)
+        new_path.add(state)
+        for move, (di, dj) in step.items():
+            blank_i, blank_j = find_blank(state)
+            new_i, new_j = blank_i + di, blank_j + dj
+            if 0 <= new_i < 3 and 0 <= new_j < 3:
+                new_state = swap(state, blank_i, blank_j, new_i, new_j)
+                subplan = or_search(new_state, new_path)
+                if subplan is not None:
+                    return [move] + subplan
+        return None
+    return or_search(start, set())
+
+
 algorithms = {
     "BFS": bfs,
     "DFS": dfs,
@@ -340,7 +361,8 @@ algorithms = {
     "Steepest Ascent HC": steepest_ascent_hill_climbing,
     "Stochastic HC": stochastic_hill_climbing,
     "Simulated Annealing": simulated_annealing,
-    "Beam Search": lambda start: beam_search(start, beam_width=3)
+    "Beam Search": lambda start: beam_search(start, beam_width=3),
+    "AND-OR Search": and_or_search
 }
 
 def update_view(state):
