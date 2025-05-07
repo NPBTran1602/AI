@@ -5,18 +5,48 @@ import heapq
 import time
 import random
 import math
+import uuid
 
-result = None
-step = {'Up': (-1, 0), 'Down': (1, 0), 'Left': (0, -1), 'Right': (0, 1)}
+BG_MAIN       = "#F3E5F5"
+FRAME_BG      = "#FCE4EC"
+TEXT_COLOR    = "#4A148C" 
+ACCENT_COLOR  = "#BA68C8"
+BTN_SOLVE_BG  = "#CE93D8"
+BTN_PAUSE_BG  = "#F48FB1"
+BTN_RESUME_BG = "#CE93D8"
+BTN_RESET_BG  = "#F06292"
+BTN_EXPORT_BG = "#BA68C8"
+BTN_FG        = TEXT_COLOR
+
+STEP_FRAME_SIZE = 160
+max_columns = 3
 delay = 500
 paused = False
 running = False
-max_columns = 3
+result = None
 step_frame_count = 0
 simulation_result = {}
+sim_after_id = None
 
 def get_state_from_entries(entries):
-    return tuple(tuple(int(entries[i][j].get() or 0) for j in range(3)) for i in range(3))
+    try:
+        return tuple(tuple(int(entries[i][j].get() or 0) for j in range(3)) for i in range(3))
+    except ValueError:
+        messagebox.showerror("Lỗi", "Dữ liệu nhập không hợp lệ! Vui lòng nhập số nguyên.")
+        return None
+
+def is_solvable(state1, state2):
+    def inversion_parity(flat):
+        inv = 0
+        for i in range(len(flat)):
+            for j in range(i+1, len(flat)):
+                if flat[i] > flat[j]:
+                    inv += 1
+        return inv % 2
+
+    flat1 = [n for row in state1 for n in row if n != 0]
+    flat2 = [n for row in state2 for n in row if n != 0]
+    return inversion_parity(flat1) == inversion_parity(flat2)
 
 def find_blank(state):
     for i in range(3):
@@ -28,7 +58,33 @@ def find_blank(state):
 def swap(state, i1, j1, i2, j2):
     new_state = [list(row) for row in state]
     new_state[i1][j1], new_state[i2][j2] = new_state[i2][j2], new_state[i1][j1]
-    return tuple(tuple(row) for row in new_state)
+    return tuple(tuple(row) for new_state in new_state)
+
+step = {'Up': (-1, 0), 'Down': (1, 0), 'Left': (0, -1), 'Right': (0, 1)}
+
+def apply_move(state, move):
+    i, j = find_blank(state)
+    di, dj = step[move]
+    new_i, new_j = i + di, j + dj
+    if 0 <= new_i < 3 and 0 <= new_j < 3:
+        return swap(state, i, j, new_i, new_j)
+    else:
+        return state
+
+def calc_heuristic(state):
+    total = 0
+    if result is None:
+        return total
+    for i in range(3):
+        for j in range(3):
+            val = state[i][j]
+            if val != 0:
+                for r in range(3):
+                    for c in range(3):
+                        if result[r][c] == val:
+                            total += abs(r - i) + abs(c - j)
+                            break
+    return total
 
 def bfs(start):
     queue = deque([(start, [])])
@@ -52,10 +108,10 @@ def dfs(start, max_depth=50):
     seen = set()
     while stack:
         current, path = stack.pop()
-        if current == result:
-            return path
         if len(path) > max_depth:
             continue
+        if current == result:
+            return path
         if current in seen:
             continue
         seen.add(current)
@@ -299,9 +355,7 @@ def simulated_annealing(start):
             current_score = new_score
             path.append(move_)
         T *= alpha
-    if current_state == result:
-        return path
-    return None
+    return path if current_state == result else None
 
 def beam_search(start, beam_width=3):
     def heuristic(state):
@@ -309,6 +363,7 @@ def beam_search(start, beam_width=3):
                    for i, row in enumerate(state)
                    for j, value in enumerate(row) if value != 0)
     beam = [(start, [])]
+    visited = {start}
     while beam:
         for state, path in beam:
             if state == result:
@@ -320,34 +375,230 @@ def beam_search(start, beam_width=3):
                 new_i, new_j = blank_i + di, blank_j + dj
                 if 0 <= new_i < 3 and 0 <= new_j < 3:
                     new_state = swap(state, blank_i, blank_j, new_i, new_j)
-                    new_path = path + [move_]
-                    next_beam.append((new_state, new_path))
+                    if new_state not in visited:
+                        visited.add(new_state)
+                        next_beam.append((new_state, path + [move_]))
         if not next_beam:
             return None
         next_beam.sort(key=lambda x: heuristic(x[0]))
         beam = next_beam[:beam_width]
     return None
 
+def genetic_algorithm_solver(initial_state, pop_size=200, gen_limit=2000, mutation_probability=0.1, max_moves=50):
+    available_moves = list(step.keys())
+
+    def make_random_candidate():
+        L = random.randint(1, max_moves)
+        return [random.choice(available_moves) for _ in range(L)]
+
+    def execute_moves(state, moves_seq):
+        current = state
+        for move in moves_seq:
+            new = apply_move(current, move)
+            if new == current:
+                return None
+            current = new
+        return current
+
+    def candidate_fitness(moves_seq):
+        final = execute_moves(initial_state, moves_seq)
+        if final is None:
+            return float('-inf')
+        h_val = calc_heuristic(final)
+        penalty = len(moves_seq) * 0.1
+        return -(h_val + penalty)
+
+    def mate(a, b):
+        cut = random.randint(1, min(len(a), len(b)) - 1) if min(len(a),len(b))>1 else 1
+        return a[:cut] + b[cut:]
+
+    def mutate(cand):
+        c = cand.copy()
+        for i in range(len(c)):
+            if random.random() < mutation_probability:
+                c[i] = random.choice(available_moves)
+        if random.random() < 0.1 and len(c)<max_moves:
+            c.append(random.choice(available_moves))
+        elif random.random() < 0.1 and len(c)>1:
+            c.pop(random.randrange(len(c)))
+        return c
+
+    def simplify_solution(moves_seq):
+        cur = initial_state
+        sol = []
+        seen = {cur}
+        for m in moves_seq:
+            nxt = apply_move(cur, m)
+            if nxt!=cur and nxt not in seen:
+                sol.append(m)
+                cur = nxt
+                seen.add(cur)
+            if cur == result:
+                break
+        return sol
+
+    population = [make_random_candidate() for _ in range(pop_size)]
+    solution = None
+
+    for gen in range(gen_limit):
+        scored = [(cand, candidate_fitness(cand)) for cand in population]
+        scored.sort(key=lambda x: x[1], reverse=True)
+        best, best_score = scored[0]
+        if execute_moves(initial_state, best) == result:
+            solution = best
+            break
+        k = max(1, pop_size//4)
+        elites = [cand for cand,_ in scored[:k]]
+        new_pop = elites.copy()
+        while len(new_pop) < pop_size:
+            p1,p2 = random.sample(elites, 2)
+            child = mutate(mate(p1,p2))
+            new_pop.append(child)
+        population = new_pop
+
+    if solution is None:
+        return None
+    sol = simplify_solution(solution)
+    return sol if execute_moves(initial_state, sol)==result else None
+
 def and_or_search(start):
+    visited = set()
     def or_search(state, path):
         if state == result:
             return []
-        # Nếu state đã xuất hiện trong path thì tránh vòng lặp
-        if state in path:
+        if tuple(map(tuple, state)) in visited:
             return None
-        new_path = set(path)
-        new_path.add(state)
+        visited.add(tuple(map(tuple, state)))
+
+        blank = find_blank(state)
         for move, (di, dj) in step.items():
+            new_i, new_j = blank[0] + di, blank[1] + dj
+            if 0 <= new_i < 3 and 0 <= new_j < 3:
+                new_state = swap(state, blank[0], blank[1], new_i, new_j)
+                and_result = and_search(new_state, path + [move])
+                if and_result is not None:
+                    return [move] + and_result
+        return None
+
+    def and_search(state, path):
+        return or_search(state, path)
+
+    solution = or_search(start, [])
+    visited.clear()
+    return solution
+
+def searching_with_no_observation(start, max_depth=50):
+    available_moves = list(step.keys())
+
+    def apply_moves(state, moves):
+        for move in moves:
             blank_i, blank_j = find_blank(state)
+            di, dj = step[move]
+            new_i, new_j = blank_i + di, blank_j + dj
+            if 0 <= new_i < 3 and 0 <= new_j < 3:
+                state = swap(state, blank_i, blank_j, new_i, new_j)
+            else:
+                return None
+        return state
+
+    def recursive_search(state, sequence, depth, visited):
+        if depth == 0:
+            if state == result:
+                return sequence
+            return None
+
+        for move in available_moves:
+            blank_i, blank_j = find_blank(state)
+            di, dj = step[move]
+            new_i, new_j = blank_i + di, blank_j + dj
+            if not (0 <= new_i < 3 and 0 <= new_j < 3):
+                continue
+
+            new_state = swap(state, blank_i, blank_j, new_i, new_j)
+            state_tuple = tuple(map(tuple, new_state))
+            if state_tuple in visited:
+                continue
+
+            visited.add(state_tuple)
+            sol = recursive_search(new_state, sequence + [move], depth - 1, visited)
+            if sol is not None:
+                return sol
+            visited.remove(state_tuple)
+
+        return None
+
+    for depth in range(1, max_depth + 1):
+        visited = {tuple(map(tuple, start))}
+        sol = recursive_search(start, [], depth, visited)
+        if sol is not None:
+            return sol
+    return None
+
+def belief_state(initial_beliefs, goal_state):
+    solvable_beliefs = [s for s in initial_beliefs if is_solvable(s, goal_state)]
+    if not solvable_beliefs:
+        return None, 0, 0, 0
+
+    def move_blank(s, action):
+        i0,j0 = find_blank(s)
+        di,dj = step[action]
+        i1,j1 = i0+di, j0+dj
+        if 0 <= i1 < 3 and 0 <= j1 < 3:
+            return swap(s, i0, j0, i1, j1)
+        return s
+
+    def h_belief(belief):
+        return min(calc_heuristic(st) for st in belief)
+
+    start_belief = frozenset(initial_beliefs)
+    start_rep    = solvable_beliefs[0]
+    g0 = 0
+    h0 = h_belief(start_belief)
+    open_heap = [(g0 + h0, g0, start_belief, start_rep, [start_belief], [start_rep])]
+    best_g = {start_belief: 0}
+    nodes_expanded = 0
+
+    while open_heap:
+        f, g, belief, rep, pathB, pathS = heapq.heappop(open_heap)
+        if goal_state in belief:
+            return pathS + [goal_state], nodes_expanded, len(pathS), g
+
+        for act in step:
+            nb = frozenset(move_blank(s, act) for s in belief)
+            nr = move_blank(rep, act)
+            ng = g + 1
+
+            if nb not in best_g or ng < best_g[nb]:
+                best_g[nb] = ng
+                nodes_expanded += 1
+                heapq.heappush(open_heap,
+                    (ng + h_belief(nb), ng, nb, nr, pathB + [nb], pathS + [nr])
+                )
+
+    return None, nodes_expanded, 0, 0
+
+def backtracking_search(start, max_depth=50):
+    def recursive_backtrack(state, path, visited, depth):
+        if state == result:
+            return path
+        if depth <= 0:
+            return None
+        
+        blank_i, blank_j = find_blank(state)
+        for move_, (di, dj) in step.items():
             new_i, new_j = blank_i + di, blank_j + dj
             if 0 <= new_i < 3 and 0 <= new_j < 3:
                 new_state = swap(state, blank_i, blank_j, new_i, new_j)
-                subplan = or_search(new_state, new_path)
-                if subplan is not None:
-                    return [move] + subplan
+                if new_state not in visited:
+                    visited.add(new_state)
+                    result_path = recursive_backtrack(new_state, path + [move_], visited, depth - 1)
+                    if result_path is not None:
+                        return result_path
+                    visited.remove(new_state)
         return None
-    return or_search(start, set())
-
+    
+    visited = {start}
+    return recursive_backtrack(start, [], visited, max_depth)
 
 algorithms = {
     "BFS": bfs,
@@ -362,7 +613,11 @@ algorithms = {
     "Stochastic HC": stochastic_hill_climbing,
     "Simulated Annealing": simulated_annealing,
     "Beam Search": lambda start: beam_search(start, beam_width=3),
-    "AND-OR Search": and_or_search
+    "Genetic Algorithm": lambda start: genetic_algorithm_solver(start),
+    "AND-OR Search": and_or_search,
+    "Searching with No Observation": searching_with_no_observation,
+    "Belief-State": lambda start: convert_states_to_moves(belief_state([start], result)[0]),
+    "Backtracking Search": backtracking_search
 }
 
 def update_view(state):
@@ -370,21 +625,22 @@ def update_view(state):
         for j in range(3):
             tile = view_labels[i][j]
             value = state[i][j]
-            tile.config(text=str(value) if value != 0 else "", bg="#E8F5E9", fg="#1B5E20")
+            tile.config(text=str(value) if value != 0 else "", bg=BG_MAIN, fg=TEXT_COLOR)
+    root.update_idletasks()
 
-def create_state_grid(parent, state_3x3, cell_size=2):
+def create_state_grid(parent, state_3x3, cell_size=1):
     for i in range(3):
         for j in range(3):
             val = state_3x3[i][j]
-            bg_color = "#C8E6C9" if val == 0 else "#FFFFFF"
+            bg_color = "#F8BBD0" if val == 0 else FRAME_BG
             lbl = tk.Label(
                 parent, 
                 text=str(val) if val != 0 else "",
                 width=cell_size, 
                 height=cell_size,
-                font=("Helvetica", 12, "bold"),
+                font=("Helvetica", 10),
                 bg=bg_color, 
-                fg="#1B5E20", 
+                fg=TEXT_COLOR, 
                 bd=1, 
                 relief="ridge"
             )
@@ -394,28 +650,47 @@ def add_step_frame(index, move_, state_3x3, step_time):
     global step_frame_count
     col = step_frame_count % max_columns
     row = step_frame_count // max_columns
-    
-    frame = tk.Frame(steps_container, bg="#F1F8E9", bd=1, relief="solid",
-                     width=140, height=140)
+
+    frame = tk.Frame(
+        steps_container,
+        bg=BG_MAIN,
+        bd=1,
+        relief="solid",
+        width=STEP_FRAME_SIZE,
+        height=STEP_FRAME_SIZE
+    )
     frame.grid(row=row, column=col, padx=5, pady=5)
     frame.grid_propagate(False)
-    
-    lbl = tk.Label(frame, text=f"Bước {index}:\n{move_}",
-                   font=("Helvetica", 12, "bold"),
-                   bg="#F1F8E9", fg="#33691E")
-    lbl.pack(padx=5, pady=2)
-    
-    grid_holder = tk.Frame(frame, bg="#F1F8E9")
-    grid_holder.pack(padx=5, pady=5)
-    create_state_grid(grid_holder, state_3x3, cell_size=2)
-    
-    time_lbl = tk.Label(frame, text=f"{step_time:.2f}s", font=("Helvetica", 10),
-                        bg="#F1F8E9", fg="#BF360C")
-    time_lbl.pack(pady=2)
+
+    frame.grid_columnconfigure(0, weight=1)
+    frame.grid_rowconfigure(0, weight=0)
+    frame.grid_rowconfigure(1, weight=1)
+    frame.grid_rowconfigure(2, weight=0)
+
+    lbl_title = tk.Label(
+        frame,
+        text=f"Bước {index} - {move_}",
+        font=("Helvetica", 10, "bold"),
+        bg=BG_MAIN,
+        fg=TEXT_COLOR
+    )
+    lbl_title.grid(row=0, column=0, sticky="n", pady=(4,2))
+
+    puzzle_frame = tk.Frame(frame, bg=BG_MAIN)
+    puzzle_frame.grid(row=1, column=0, sticky="ns", padx=5)
+    create_state_grid(puzzle_frame, state_3x3, cell_size=1)
+
+    time_lbl = tk.Label(
+        frame,
+        text=f"{step_time:.2f}s",
+        font=("Helvetica", 9),
+        bg=BG_MAIN,
+        fg=ACCENT_COLOR
+    )
+    time_lbl.grid(row=2, column=0, sticky="s", pady=(2,4))
 
     step_frame_count += 1
 
-# --- Control Functions ---
 def pause_program():
     global paused
     paused = True
@@ -425,17 +700,16 @@ def resume_program():
     paused = False
 
 def reset_program():
-    global running, paused, step_frame_count, simulation_result
+    global running, paused, step_frame_count, simulation_result, sim_after_id
     running = False
     paused = False
     step_frame_count = 0
     simulation_result = {}
-    for row in initial_entries:
-        for e in row:
-            e.delete(0, tk.END)
-    for row in goal_entries:
-        for e in row:
-            e.delete(0, tk.END)
+    if sim_after_id is not None:
+        try:
+            root.after_cancel(sim_after_id)
+        except Exception:
+            pass
     for widget in steps_container.winfo_children():
         widget.destroy()
     for widget in time_container.winfo_children():
@@ -445,97 +719,116 @@ def reset_program():
     time_label.config(text="Thời gian: 00:00")
 
 def export_file():
-    if not simulation_result:
+    if not simulation_result.get('states'):
         messagebox.showerror("Lỗi", "Chưa có kết quả chạy để xuất file!")
         return
+
     try:
+        total_time = simulation_result.get('total_time')
+        if total_time is None:
+            total_time = sum(simulation_result.get('step_times', []))
+
         with open("test.txt", "w", encoding="utf-8") as file:
             file.write("=== 8-Puzzle Solution Steps ===\n\n")
             file.write("Trạng thái ban đầu:\n")
             for row in simulation_result['initial']:
-                file.write(" ".join(map(str, row)) + "\n")
+                file.write("  " + " ".join(map(str, row)) + "\n")
             file.write("\n")
+            if 'goal' in simulation_result:
+                file.write("Trạng thái đích:\n")
+                for row in simulation_result['goal']:
+                    file.write("  " + " ".join(map(str, row)) + "\n")
+                file.write("\n")
             for i, (move, state, stime) in enumerate(
-                zip(simulation_result['steps'], 
-                    simulation_result['states'][1:], 
-                    simulation_result['step_times']), 
+                zip(
+                    simulation_result['steps'],
+                    simulation_result['states'][1:],
+                    simulation_result['step_times']
+                ),
                 start=1
             ):
                 file.write(f"Bước {i}: {move}\n")
                 for row in state:
-                    file.write(" ".join(map(str, row)) + "\n")
-                file.write(f"Thời gian bước {i}: {stime:.2f}s\n\n")
+                    file.write("  " + " ".join(map(str, row)) + "\n")
+                file.write(f"  Thời gian bước {i}: {stime:.2f}s\n\n")
             file.write(f"Tổng số bước: {len(simulation_result['steps'])}\n")
-            file.write(f"Tổng thời gian: {simulation_result['total_time']:.2f}s\n")
-        messagebox.showinfo("Xuất file thành công", "Đã xuất kết quả vào file: test.txt")
+            file.write(f"Tổng thời gian: {total_time:.2f}s\n")
+
+        messagebox.showinfo("Xuất file thành công",
+                            "Đã xuất kết quả vào file: test.txt")
+
     except Exception as e:
-        messagebox.showerror("Lỗi", f"Lỗi khi xuất file: {str(e)}")
+        messagebox.showerror("Lỗi", f"Lỗi khi xuất file:\n{e}")
 
 def simulate_solution(steps, current_state, index, all_states, step_times):
-    global simulation_result
+    global simulation_result, sim_after_id
+
     if index >= len(steps):
         total_time = time.time() - simulation_result['start_time']
-        simulation_result['total_time'] = total_time
         time_label.config(text=f"Thời gian: {total_time:.2f}s")
-        steps_count.config(text=f"Bước: {len(simulation_result['steps'])}")
-        
-        for widget in time_container.winfo_children():
-            widget.destroy()
+        for w in time_container.winfo_children():
+            w.destroy()
         for idx, t in enumerate(simulation_result['step_times'], start=1):
             tk.Label(
-                time_container, 
-                text=f"Bước {idx}: {t:.2f}s", 
-                bg="#F1F8E9", 
-                fg="#33691E", 
+                time_container,
+                text=f"Bước {idx}: {t:.2f}s",
+                bg=BG_MAIN,
+                fg=TEXT_COLOR,
                 font=("Helvetica", 10, "bold")
             ).pack(padx=5, pady=2, anchor="w")
-        
-        messagebox.showinfo("Kết quả", f"Đã giải trong {len(simulation_result['steps'])} bước và {total_time:.2f} giây")
+        messagebox.showinfo(
+            "Kết quả",
+            f"Đã giải trong {len(simulation_result['steps'])} bước và {total_time:.2f} giây"
+        )
+        sim_after_id = None
         return
 
     if paused:
-        root.after(50, lambda: simulate_solution(steps, current_state, index, all_states, step_times))
+        sim_after_id = root.after(50,lambda: simulate_solution(steps, current_state, index, all_states, step_times))
         return
 
-    current_time = time.time()
-    last_timestamp = simulation_result.get('last_timestamp', simulation_result['start_time'])
-    curr_step_time = current_time - last_timestamp
-    simulation_result['last_timestamp'] = current_time
+    now = time.time()
+    last = simulation_result.get('last_timestamp', simulation_result['start_time'])
+    curr_step_time = now - last
+    simulation_result['last_timestamp'] = now
 
-    blank_i, blank_j = find_blank(current_state)
     move_ = steps[index]
-    new_state = swap(
-        current_state, 
-        blank_i, 
-        blank_j,
-        blank_i + step[move_][0],
-        blank_j + step[move_][1]
-    )
+    new_state = apply_move(current_state, move_)
+    if new_state == current_state:
+        sim_after_id = root.after(delay,
+            lambda: simulate_solution(steps, current_state, index+1, all_states, step_times)
+        )
+        return
+
     update_view(new_state)
     all_states.append(new_state)
     step_times.append(curr_step_time)
-
     add_step_frame(index, move_, new_state, curr_step_time)
-    
-    simulation_result.setdefault('steps', []).append(move_)
-    simulation_result.setdefault('states', []).append(new_state)
-    simulation_result.setdefault('step_times', []).append(curr_step_time)
 
+    simulation_result['steps'].append(move_)
+    simulation_result['states'].append(new_state)
+    simulation_result['step_times'].append(curr_step_time)
     steps_count.config(text=f"Bước: {len(simulation_result['steps'])}")
-    
-    root.after(delay, lambda: simulate_solution(steps, new_state, index + 1, all_states, step_times))
+
+    sim_after_id = root.after(delay, lambda: simulate_solution(steps, new_state, index+1, all_states, step_times))
 
 def solve_puzzle():
-    global result, paused, running, simulation_result, step_frame_count
-    running = True
-    step_frame_count = 0
+    global result, paused, running, simulation_result, step_frame_count, sim_after_id
+    if sim_after_id is not None:
+        try:
+            root.after_cancel(sim_after_id)
+        except Exception:
+            pass
+        sim_after_id = None
 
     for widget in steps_container.winfo_children():
         widget.destroy()
-
     for widget in time_container.winfo_children():
         widget.destroy()
-
+    
+    paused = False
+    running = True
+    step_frame_count = 0
     simulation_result = {}
     simulation_result['states'] = []
     simulation_result['steps'] = []
@@ -545,13 +838,21 @@ def solve_puzzle():
     time_label.config(text="Thời gian: 00:00")
 
     initial_state = get_state_from_entries(initial_entries)
+    if initial_state is None:
+        return
     simulation_result['initial'] = initial_state
-    result_state = get_state_from_entries(goal_entries)
-    update_view(initial_state)
 
+    result_state = get_state_from_entries(goal_entries)
+    if result_state is None:
+        return
+
+    if not is_solvable(initial_state, result_state) or not is_solvable(result_state, initial_state):
+        messagebox.showerror("Lỗi", "Puzzle không khả thi!")
+        return
+
+    update_view(initial_state)
     global result
     result = result_state
-
     simulation_result['start_time'] = time.time()
     simulation_result['last_timestamp'] = simulation_result['start_time']
     
@@ -560,41 +861,45 @@ def solve_puzzle():
     solution = algorithm(initial_state)
     if solution:
         simulation_result['states'].append(initial_state)
-        root.after(100, lambda: simulate_solution(solution, initial_state, 0, [initial_state], []))
+        sim_after_id = root.after(100, lambda: simulate_solution(solution, initial_state, 0, [initial_state], []))
     else:
-        messagebox.showerror("Thất bại", "Không tìm thấy giải pháp!")
+        messagebox.showerror("Thất bại", f"Thuật toán {alg_name} không tìm thấy lời giải!")
 
-
+# --- Giao diện chính ---
 root = tk.Tk()
 root.title("8-Puzzle Solver - Nguyễn Phạm Bảo Trân - 23110348")
 root.geometry("1200x750")
-root.configure(bg="#ECEFF1")
+root.configure(bg=BG_MAIN)
 
 root.grid_columnconfigure(0, weight=1, uniform="group1")
 root.grid_columnconfigure(1, weight=0, uniform="group1")
 root.grid_columnconfigure(2, weight=2, uniform="group1")
 
-# --- Cột 0: Nhập trạng thái & Puzzle Hiện Tại ---
-frame_input = tk.Frame(root, bg="#ECEFF1")
+frame_input = tk.Frame(root, bg=BG_MAIN)
 frame_input.grid(row=0, column=0, sticky="nw", padx=10, pady=10)
 
 frame_initial = tk.LabelFrame(
     frame_input, 
     text="Trạng Thái Xuất Phát", 
     font=("Helvetica", 12, "bold"),
-    bg="#FFFFFF", 
-    fg="#00695C", 
+    bg=FRAME_BG, 
+    fg=ACCENT_COLOR, 
     bd=2, 
-    relief="groove"
+    relief="ridge"
 )
 frame_initial.grid(row=0, column=0, padx=5, pady=5, sticky="nsew")
+for i in range(3):
+    frame_initial.grid_rowconfigure(i, weight=1)
+for j in range(3):
+    frame_initial.grid_columnconfigure(j, weight=1)
 
 initial_entries = []
 for i in range(3):
     row = []
     for j in range(3):
-        e = tk.Entry(frame_initial, width=3, font=("Helvetica", 16), justify="center", bg="#B2DFDB")
-        e.grid(row=i, column=j, padx=5, pady=5, sticky="nsew")
+        e = tk.Entry(frame_initial, width=4, font=("Helvetica", 16, "bold"),
+                     justify="center", bg=FRAME_BG, bd=1, relief="ridge")
+        e.grid(row=i, column=j, padx=5, pady=5, ipady=10, sticky="nsew")
         row.append(e)
     initial_entries.append(row)
 
@@ -602,19 +907,24 @@ frame_goal = tk.LabelFrame(
     frame_input, 
     text="Trạng Thái Đích", 
     font=("Helvetica", 12, "bold"),
-    bg="#FFFFFF", 
-    fg="#00695C", 
+    bg=FRAME_BG, 
+    fg=ACCENT_COLOR, 
     bd=2, 
-    relief="groove"
+    relief="ridge"
 )
 frame_goal.grid(row=1, column=0, padx=5, pady=5, sticky="nsew")
+for i in range(3):
+    frame_goal.grid_rowconfigure(i, weight=1)
+for j in range(3):
+    frame_goal.grid_columnconfigure(j, weight=1)
 
 goal_entries = []
 for i in range(3):
     row = []
     for j in range(3):
-        e = tk.Entry(frame_goal, width=3, font=("Helvetica", 16), justify="center", bg="#B2DFDB")
-        e.grid(row=i, column=j, padx=5, pady=5, sticky="nsew")
+        e = tk.Entry(frame_goal, width=4, font=("Helvetica", 16, "bold"),
+                     justify="center", bg=FRAME_BG, bd=1, relief="ridge")
+        e.grid(row=i, column=j, padx=5, pady=5, ipady=10, sticky="nsew")
         row.append(e)
     goal_entries.append(row)
 
@@ -622,23 +932,23 @@ frame_view = tk.LabelFrame(
     frame_input, 
     text="Puzzle Hiện Tại", 
     font=("Helvetica", 12, "bold"),
-    bg="#FFFFFF", 
-    fg="#00695C", 
+    bg=FRAME_BG, 
+    fg=ACCENT_COLOR, 
     bd=2, 
     relief="groove"
 )
 frame_view.grid(row=2, column=0, padx=5, pady=5, sticky="nsew")
 
-info_frame = tk.Frame(frame_view, bg="#FFFFFF")
+info_frame = tk.Frame(frame_view, bg=FRAME_BG)
 info_frame.pack(pady=5)
 
-steps_count = tk.Label(info_frame, text="Bước: 0", font=("Helvetica", 10), bg="#FFFFFF", fg="#004D40")
+steps_count = tk.Label(info_frame, text="Bước: 0", font=("Helvetica", 10), bg=FRAME_BG, fg=TEXT_COLOR)
 steps_count.pack(side="left", padx=10)
 
-time_label = tk.Label(info_frame, text="Thời gian: 00:00", font=("Helvetica", 10), bg="#FFFFFF", fg="#004D40")
+time_label = tk.Label(info_frame, text="Thời gian: 00:00", font=("Helvetica", 10), bg=FRAME_BG, fg=TEXT_COLOR)
 time_label.pack(side="left", padx=10)
 
-grid_frame = tk.Frame(frame_view, bg="#FFFFFF")
+grid_frame = tk.Frame(frame_view, bg=FRAME_BG)
 grid_frame.pack(padx=10, pady=10)
 
 view_labels = []
@@ -651,8 +961,8 @@ for i in range(3):
             width=4, 
             height=2,
             font=("Helvetica", 16, "bold"),
-            bg="#FFFFFF", 
-            fg="#004D40", 
+            bg=FRAME_BG, 
+            fg=TEXT_COLOR, 
             bd=1, 
             relief="ridge"
         )
@@ -660,15 +970,15 @@ for i in range(3):
         row.append(lbl)
     view_labels.append(row)
 
-frame_control = tk.Frame(root, bg="#ECEFF1")
+frame_control = tk.Frame(root, bg=BG_MAIN)
 frame_control.grid(row=0, column=1, sticky="n", padx=10, pady=10)
 
 alg_frame = tk.LabelFrame(
     frame_control, 
     text="Chọn Thuật Toán", 
     font=("Helvetica", 12, "bold"), 
-    bg="#FFFFFF", 
-    fg="#00695C", 
+    bg=FRAME_BG, 
+    fg=ACCENT_COLOR, 
     bd=2, 
     relief="groove"
 )
@@ -685,114 +995,128 @@ alg_dropdown = ttk.Combobox(
 )
 alg_dropdown.pack(padx=10, pady=10, fill="x")
 
-control_frame = tk.LabelFrame(
+ctrl_frame = tk.LabelFrame(
     frame_control, 
     text="Điều Khiển", 
     font=("Helvetica", 12, "bold"), 
-    bg="#FFFFFF", 
-    fg="#00695C", 
+    bg=FRAME_BG, 
+    fg=ACCENT_COLOR, 
     bd=2, 
     relief="groove"
 )
-control_frame.pack(padx=5, pady=5, fill="x")
+ctrl_frame.pack(padx=5, pady=5, fill="x")
+
+BUTTON_WIDTH  = 15
+BUTTON_HEIGHT = 2
 
 btn_solve = tk.Button(
-    control_frame, 
+    ctrl_frame, 
     text="Giải", 
-    font=("Helvetica", 14, "bold"), 
-    bg="#80CBC4", 
-    fg="#004D40", 
-    command=solve_puzzle
+    font=("Helvetica", 12), 
+    bg=BTN_SOLVE_BG, 
+    fg=BTN_FG, 
+    command=solve_puzzle,
+    width=BUTTON_WIDTH,
+    height=BUTTON_HEIGHT
 )
-btn_solve.pack(padx=10, pady=5, fill="x")
+btn_solve.pack(padx=5, pady=5, fill="x")
 
 btn_pause = tk.Button(
-    control_frame, 
+    ctrl_frame, 
     text="Tạm Dừng", 
     font=("Helvetica", 12), 
-    bg="#FFAB91", 
-    fg="#BF360C", 
-    command=pause_program
+    bg=BTN_PAUSE_BG, 
+    fg=BTN_FG, 
+    command=pause_program,
+    width=BUTTON_WIDTH,
+    height=BUTTON_HEIGHT
 )
 btn_pause.pack(padx=5, pady=5, fill="x")
 
 btn_resume = tk.Button(
-    control_frame, 
+    ctrl_frame, 
     text="Tiếp Tục", 
     font=("Helvetica", 12), 
-    bg="#A5D6A7", 
-    fg="#1B5E20", 
-    command=resume_program
+    bg=BTN_RESUME_BG, 
+    fg=BTN_FG, 
+    command=resume_program,
+    width=BUTTON_WIDTH,
+    height=BUTTON_HEIGHT
 )
 btn_resume.pack(padx=5, pady=5, fill="x")
 
 btn_reset = tk.Button(
-    control_frame, 
+    ctrl_frame, 
     text="Reset", 
     font=("Helvetica", 12), 
-    bg="#CE93D8", 
-    fg="#4A148C", 
-    command=reset_program
+    bg=BTN_RESET_BG, 
+    fg=BTN_FG, 
+    command=reset_program,
+    width=BUTTON_WIDTH,
+    height=BUTTON_HEIGHT
 )
 btn_reset.pack(padx=5, pady=5, fill="x")
 
 btn_export = tk.Button(
-    control_frame, 
+    ctrl_frame, 
     text="Xuất File", 
     font=("Helvetica", 12), 
-    bg="#AED581", 
-    fg="#33691E", 
-    command=export_file
+    bg=BTN_EXPORT_BG, 
+    fg=BTN_FG, 
+    command=export_file,
+    width=BUTTON_WIDTH,
+    height=BUTTON_HEIGHT
 )
 btn_export.pack(padx=5, pady=5, fill="x")
 
 frame_time = tk.LabelFrame(
-    frame_control, 
+    ctrl_frame, 
     text="Thời Gian Chạy", 
     font=("Helvetica", 12, "bold"), 
-    bg="#FFFFFF", 
-    fg="#00695C", 
+    bg=FRAME_BG, 
+    fg=ACCENT_COLOR, 
     bd=2, 
     relief="groove"
 )
 frame_time.pack(padx=5, pady=5, fill="both", expand=True)
 
-time_canvas = tk.Canvas(frame_time, bg="#FFFFFF")
+time_canvas = tk.Canvas(frame_time, bg=FRAME_BG)
 time_canvas.pack(side="left", fill="both", expand=True)
 
 time_scrollbar = tk.Scrollbar(frame_time, orient="vertical", command=time_canvas.yview)
 time_scrollbar.pack(side="right", fill="y")
-
 time_canvas.configure(yscrollcommand=time_scrollbar.set)
 
-time_container = tk.Frame(time_canvas, bg="#FFFFFF")
+time_container = tk.Frame(time_canvas, bg=FRAME_BG)
 time_canvas.create_window((0, 0), window=time_container, anchor="nw")
 
 def on_time_configure(event):
     time_canvas.configure(scrollregion=time_canvas.bbox("all"))
-
 time_container.bind("<Configure>", on_time_configure)
 
 bottom_frame = tk.LabelFrame(
     root, 
     text="Các Bước Giải", 
     font=("Helvetica", 12, "bold"), 
-    bg="#ECEFF1", 
-    fg="#00695C", 
+    bg=BG_MAIN, 
+    fg=ACCENT_COLOR, 
     bd=2, 
     relief="groove"
 )
 bottom_frame.grid(row=0, column=2, sticky="nsew", padx=10, pady=10)
 
-canvas = tk.Canvas(bottom_frame, bg="#ECEFF1")
+canvas = tk.Canvas(bottom_frame, bg=BG_MAIN)
 canvas.pack(side="left", fill="both", expand=True)
 
 scrollbar = tk.Scrollbar(bottom_frame, orient="vertical", command=canvas.yview)
 scrollbar.pack(side="right", fill="y")
 canvas.configure(yscrollcommand=scrollbar.set)
 
-steps_container = tk.Frame(canvas, bg="#ECEFF1")
+steps_container = tk.Frame(canvas, bg=BG_MAIN)
 canvas.create_window((0, 0), window=steps_container, anchor="nw")
+
+for col in range(max_columns):
+    steps_container.grid_columnconfigure(col, minsize=STEP_FRAME_SIZE + 10)
 
 def on_configure(event):
     canvas.configure(scrollregion=canvas.bbox("all"))
