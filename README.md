@@ -11,6 +11,8 @@ Ngày báo cáo: Tháng 05 năm 2025
 
 
 1. Mục tiêu
+
+
 Mục tiêu của đồ án này là tìm hiểu, triển khai và đánh giá hiệu quả của các thuật toán tìm kiếm khác nhau trong lĩnh vực Trí tuệ Nhân tạo để giải quyết bài toán kinh điển 8-Puzzle. Cụ thể, nhóm hướng tới:
 
 Nắm vững lý thuyết về các thuật toán tìm kiếm có thông tin và không có thông tin, tìm kiếm cục bộ, tìm kiếm dựa trên ràng buộc, tìm kiếm trong môi trường phức tạp và học tăng cường.
@@ -27,6 +29,8 @@ So sánh và đưa ra nhận xét về ưu nhược điểm của từng thuật
 
 
 2. Nội dung
+
+
 2.1. Bài toán tìm kiếm và các khái niệm cơ bản
    
 Bài toán 8-Puzzle là một ví dụ điển hình của bài toán tìm kiếm trạng thái trong AI. Mục tiêu là di chuyển các ô vuông (được đánh số từ 1 đến 8) trên một bàn cờ 3x3 để đạt được một trạng thái đích cho trước, bằng cách trượt ô trống (số 0) vào các vị trí liền kề.
